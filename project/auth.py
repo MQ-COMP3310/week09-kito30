@@ -3,8 +3,14 @@ from flask_login import login_user, login_required, logout_user
 from sqlalchemy import text
 from .models import User
 from . import db, app
+from werkzeug.security import generate_password_hash, check_password_hash
 
 auth = Blueprint('auth', __name__)
+
+def hash_password(password):
+    return generate_password_hash(password,method='pbkdf2:sha256', salt_length=16)
+    
+
 
 @auth.route('/login')
 def login():
@@ -15,12 +21,11 @@ def login_post():
     email = request.form.get('email')
     password = request.form.get('password')
     remember = True if request.form.get('remember') else False
-
     user = User.query.filter_by(email=email).first()
 
     # check if the user actually exists
     # take the user-supplied password and compare it with the stored password
-    if not user or not (user.password == password):
+    if not user or not check_password_hash(user.password,password):
         flash('Please check your login details and try again.')
         app.logger.warning("User login failed")
         return redirect(url_for('auth.login')) # if the user doesn't exist or password is wrong, reload the page
@@ -38,15 +43,22 @@ def signup_post():
     email = request.form.get('email')
     name = request.form.get('name')
     password = request.form.get('password')
-
-    user = db.session.execute(text('select * from user where email = "' + email +'"')).all()
+    
+    if '..' in name or '//' in name or '..' in password or '//' in password or '..' in email or '//' in email:
+        flash('Invalid email, name or password')
+        app.logger.debug("Prohibited values")
+        return redirect(url_for('auth.signup'))
+    #vulnerable for sql injection attack
+    query = text('SELECT * FROM user WHERE email = :email')
+    user = db.session.execute(query,{'email':email}).all();
     if len(user) > 0: # if a user is found, we want to redirect back to signup page so user can try again
         flash('Email address already exists')  # 'flash' function stores a message accessible in the template code.
         app.logger.debug("User email already exists")
         return redirect(url_for('auth.signup'))
 
     # create a new user with the form data. TODO: Hash the password so the plaintext version isn't saved.
-    new_user = User(email=email, name=name, password=password)
+    hashed_password = hash_password(password)
+    new_user = User(email=email, name=name, password=hashed_password)
 
     # add the new user to the database
     db.session.add(new_user)
@@ -59,5 +71,4 @@ def signup_post():
 def logout():
     logout_user();
     return redirect(url_for('main.index'))
-
 # See https://www.digitalocean.com/community/tutorials/how-to-add-authentication-to-your-app-with-flask-login for more information
